@@ -1,0 +1,55 @@
+# gradle
+
+.gradle/
+build/
+out/
+classes/
+
+# eclipse
+
+*.launch
+
+# idea
+
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# vscode
+
+.settings/
+.vscode/
+bin/
+.classpath
+.project
+
+# macos
+
+*.DS_Store
+
+# fabric
+
+run/
+
+# java
+
+hs_err_*.log
+replay_*.log
+*.hprof
+*.jfr
+
+# 内部资料（仅本地保留，不进入公开仓库）
+
+ReferenceDocument/
+
+# 本地敏感配置与密钥
+
+.env
+.env.*
+local.properties
+secrets.properties
+*.jks
+*.keystore
+*.p12
+*.pfx
