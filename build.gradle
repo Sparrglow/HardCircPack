@@ -9,6 +9,11 @@ repositories {
 	// Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
 	// See https://docs.gradle.org/current/userguide/declaring_repositories.html
 	// for more information about repositories.
+	maven {
+		name = "WispForest"
+		url = "https://maven.wispforest.io"
+	}
+	mavenCentral()
 }
 
 loom {
@@ -22,13 +27,6 @@ loom {
 	}
 }
 
-fabricApi {
-	configureDataGeneration {
-		client = true
-		modId = "hardcirc_pack"
-	}
-}
-
 dependencies {
 	// To change the versions see the gradle.properties file
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
@@ -37,6 +35,13 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	// owo-ui：全模组唯一 UI 框架（客户端隔离由 sourceset 保证）
+	modImplementation "io.wispforest:owo-lib:${project.owo_version}"
+
+	// 串口库：纯 Java 原生库，随模组内嵌
+	implementation "com.fazecast:jSerialComm:${project.jserialcomm_version}"
+	include "com.fazecast:jSerialComm:${project.jserialcomm_version}"
 }
 
 processResources {

@@ -2,36 +2,26 @@
 	"schemaVersion": 1,
 	"id": "hardcirc_pack",
 	"version": "${version}",
-	"name": "hardcirc_pack",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"name": "HardCircPack",
+	"description": "一个能用现实硬件与Minecraft双向联动的科技模组",
 	"authors": [
-		"Me!"
+		"Sparrglow"
 	],
 	"contact": {
 		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
+		"sources": "https://github.com/Sparrglow/HardCircPack"
 	},
 	"license": "CC0-1.0",
 	"icon": "assets/hardcirc_pack/icon.png",
 	"environment": "*",
 	"entrypoints": {
 		"main": [
-			"com.sparrglow.hardcircpack.Hardcirc_pack"
+			"com.sparrglow.hardcircpack.HardCircPack"
 		],
 		"client": [
-			"com.sparrglow.hardcircpack.client.Hardcirc_packClient"
-		],
-		"fabric-datagen": [
-			"com.sparrglow.hardcircpack.client.Hardcirc_packDataGenerator"
+			"com.sparrglow.hardcircpack.client.HardCircPackClient"
 		]
 	},
-	"mixins": [
-		"hardcirc_pack.mixins.json",
-		{
-			"config": "hardcirc_pack.client.mixins.json",
-			"environment": "client"
-		}
-	],
 	"depends": {
 		"fabricloader": ">=0.19.5",
 		"minecraft": "~1.21.3",
