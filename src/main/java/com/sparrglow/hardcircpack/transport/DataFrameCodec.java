@@ -14,6 +14,7 @@ public final class DataFrameCodec {
     private static final byte HEADER_0 = (byte) 0xAA;
     private static final byte HEADER_1 = (byte) 0x55;
     private static final byte TYPE_DATA = (byte) 0x01;
+    /** 方向语义（协议 4.4）：0x01=C2S=ESP32/硬件端→游戏端；0x02=S2C=游戏端→ESP32。 */
     private static final byte DIRECTION_C2S = (byte) 0x01;
     private static final byte DIRECTION_S2C = (byte) 0x02;
 
@@ -52,8 +53,9 @@ public final class DataFrameCodec {
             HardCircPack.LOGGER.warn("串口包帧类型 {} 非法，整包丢弃", raw[2]);
             return null;
         }
-        if (raw[3] != DIRECTION_S2C) {
-            HardCircPack.LOGGER.warn("串口包方向 {} 非法，整包丢弃", raw[3]);
+        // 方向校验：decode 解析的是 ESP32 发往游戏端的 C2S 上行帧（协议 4.4 方向字节 0x01）。
+        if (raw[3] != DIRECTION_C2S) {
+            HardCircPack.LOGGER.warn("串口包方向 {} 非法（应为 C2S 0x01），整包丢弃", raw[3]);
             return null;
         }
 
@@ -76,14 +78,14 @@ public final class DataFrameCodec {
     }
 
     /**
-     * 打包游戏端下发帧（方向 C2S）。阶段2收发器数据模式输出使用。
+     * 打包游戏端下发帧（方向 S2C 0x02）。阶段2收发器数据模式输出使用。
      */
     public static byte[] encode(int transceiverId, int[] terminals) {
         byte[] frame = new byte[FRAME_LENGTH];
         frame[0] = HEADER_0;
         frame[1] = HEADER_1;
         frame[2] = TYPE_DATA;
-        frame[3] = DIRECTION_C2S;
+        frame[3] = DIRECTION_S2C;
         frame[4] = (byte) (transceiverId & 0xFF);
         for (int i = 0; i < 4; i++) {
             int value = terminals != null && i < terminals.length ? terminals[i] : 0;

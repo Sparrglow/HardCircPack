@@ -1,5 +1,6 @@
 package com.sparrglow.hardcircpack.client;
 
+import com.sparrglow.hardcircpack.client.transceiver.TransceiverBlockEntityRenderer;
 import com.sparrglow.hardcircpack.client.ui.ControlHubScreen;
 import com.sparrglow.hardcircpack.network.ControlHubPayloads.NoticePayload;
 import com.sparrglow.hardcircpack.network.ControlHubPayloads.PortsPayload;
@@ -7,6 +8,7 @@ import com.sparrglow.hardcircpack.network.ControlHubPayloads.StatePayload;
 import com.sparrglow.hardcircpack.registry.ModContent;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.client.rendering.v1.BlockEntityRendererRegistry;
 import net.minecraft.client.gui.screens.MenuScreens;
 
 /**
@@ -19,6 +21,9 @@ public class HardCircPackClient implements ClientModInitializer {
 	@Override
 	public void onInitializeClient() {
 		MenuScreens.register(ModContent.CONTROL_HUB_MENU, ControlHubScreen::new);
+
+		BlockEntityRendererRegistry.register(ModContent.TRANSCEIVER_BLOCK_ENTITY,
+				TransceiverBlockEntityRenderer::new);
 
 		ClientPlayNetworking.registerGlobalReceiver(StatePayload.TYPE, (payload, context) ->
 				context.client().execute(() -> ControlHubClientState.acceptState(payload.toState())));

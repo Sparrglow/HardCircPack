@@ -1,14 +1,18 @@
 package com.sparrglow.hardcircpack;
 
+import com.sparrglow.hardcircpack.command.TransceiverCommand;
 import com.sparrglow.hardcircpack.network.ControlHubNetwork;
 import com.sparrglow.hardcircpack.registry.ModContent;
+import com.sparrglow.hardcircpack.transceiver.HardCircTransceiverBlock;
 import com.sparrglow.hardcircpack.transport.SerialTransport;
 import com.sparrglow.hardcircpack.transport.ServerTransportManager;
 import com.sparrglow.hardcircpack.transport.TransportRegistry;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.InteractionResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,6 +32,15 @@ public class HardCircPack implements ModInitializer {
 
 		ControlHubNetwork.registerPayloads();
 		ControlHubNetwork.registerServerReceivers();
+
+		// 收发器调试命令：/hardcirc transceiver ...
+		TransceiverCommand.register();
+
+		// 收发器站立左键切换端子启用位；其它方块与下潜状态一律放行
+		AttackBlockCallback.EVENT.register((player, level, hand, pos, direction) ->
+				level.getBlockState(pos).getBlock() instanceof HardCircTransceiverBlock
+						? HardCircTransceiverBlock.onAttack(player, level, pos, direction)
+						: InteractionResult.PASS);
 
 		// 服务端全局 tick：统一拉取串口数据并按收发器ID路由（收发器 tick 不得读串口）
 		ServerTickEvents.END_SERVER_TICK.register(ServerTransportManager.instance()::tick);

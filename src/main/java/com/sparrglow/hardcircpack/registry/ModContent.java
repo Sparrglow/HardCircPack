@@ -37,7 +37,8 @@ public final class ModContent {
     public static final ControlHubBlock CONTROL_HUB =
             new ControlHubBlock(BlockBehaviour.Properties.of()
                     .setId(CONTROL_HUB_KEY)
-                    .strength(2.0F));
+                    .strength(2.0F)
+                    .noOcclusion());
 
     public static final BlockItem CONTROL_HUB_ITEM =
             new BlockItem(CONTROL_HUB, new Item.Properties().setId(CONTROL_HUB_ITEM_KEY));
@@ -45,7 +46,9 @@ public final class ModContent {
     public static final HardCircTransceiverBlock TRANSCEIVER =
             new HardCircTransceiverBlock(BlockBehaviour.Properties.of()
                     .setId(TRANSCEIVER_KEY)
-                    .strength(2.0F));
+                    .strength(2.0F)
+                    .noOcclusion()
+                    .lightLevel(state -> HardCircTransceiverBlock.isAnyActive(state) ? 3 : 0));
 
     public static final BlockItem TRANSCEIVER_ITEM =
             new BlockItem(TRANSCEIVER, new Item.Properties().setId(TRANSCEIVER_ITEM_KEY));

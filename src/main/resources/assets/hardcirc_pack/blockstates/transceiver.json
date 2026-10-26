@@ -1,7 +1,9 @@
 {
-  "variants": {
-    "": {
-      "model": "hardcirc_pack:block/transceiver"
+  "multipart": [
+    {
+      "apply": {
+        "model": "hardcirc_pack:block/transceiver"
+      }
     }
-  }
+  ]
 }
