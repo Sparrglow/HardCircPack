@@ -37,6 +37,8 @@ public final class ServerTransportManager {
     private static final int RAW_LINE_MAX_BYTES = 512;
     /** 连接后持续收不到任何字节时，给出一条可操作的告警。 */
     private static final long NO_DATA_WARN_NANOS = 5_000_000_000L;
+    /** S2C 下行节流：上限 20Hz（50ms），统一在 sendFrame() 执行，收发器不得绕过。 */
+    private static final long MIN_SEND_INTERVAL_NANOS = 50_000_000L;
 
     private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "HardCirc-Transport-IO");
@@ -61,6 +63,8 @@ public final class ServerTransportManager {
     private volatile String port = "";
     private volatile int baud;
     private volatile String status = HubState.STATUS_IDLE;
+    /** 上次 S2C 下发时刻（纳秒），仅服务端主线程读写，用于 20Hz 节流。 */
+    private long lastSendNanos;
 
     private ServerTransportManager() {
     }
@@ -132,6 +136,32 @@ public final class ServerTransportManager {
             return;
         }
         transceiver.onDataReceived(frame.terminals());
+    }
+
+    /**
+     * 组装并下发 S2C 帧（游戏端→ESP32）：校验传输已连接 → 20Hz 节流 →
+     * {@link DataFrameCodec#encode} → {@link HardwareTransport#send} → 记录 SENT 方向日志（控制台蓝色 TX 行）。
+     * <p>
+     * 仅允许服务端主线程调用（收发器 tick 运行在服务端 tick 线程内）。收发器严禁持有或直接调用
+     * {@link HardwareTransport}，必须经本方法下发。
+     *
+     * @return 是否真正写入串口；返回 false 表示未连接或被 20Hz 节流拦下，调用方应保留变化以便下次重试
+     */
+    public boolean sendFrame(int transceiverId, int[] terminals) {
+        HardwareTransport current = this.transport;
+        if (current == null || !current.isConnected()) {
+            return false;
+        }
+        long now = System.nanoTime();
+        if (now - this.lastSendNanos < MIN_SEND_INTERVAL_NANOS) {
+            return false;
+        }
+        byte[] frame = DataFrameCodec.encode(transceiverId, terminals);
+        current.send(frame);
+        this.lastSendNanos = now;
+        log(LogDirection.SENT, "INFO", "log.hardcirc_pack.tx_frame",
+                String.valueOf(transceiverId), formatTerminals(terminals));
+        return true;
     }
 
     /**

@@ -48,11 +48,18 @@ public final class TransceiverCommand {
                 .then(Commands.literal("transceiver")
                         .requires(source -> source.hasPermission(2))
                         .then(Commands.literal("info").executes(TransceiverCommand::info))
+                        .then(Commands.literal("capture").executes(TransceiverCommand::capture))
+                        .then(Commands.literal("send").executes(TransceiverCommand::send))
                         .then(Commands.literal("reset").executes(TransceiverCommand::reset))
                         .then(Commands.argument("terminal",
                                         IntegerArgumentType.integer(0, HardCircTransceiverBlock.TERMINAL_COUNT - 1))
                                 .then(Commands.literal("enable").executes(TransceiverCommand::toggleEnabled))
-                                .then(Commands.literal("direction").executes(TransceiverCommand::toggleDirection))
+                                .then(Commands.literal("direction")
+                                        .executes(TransceiverCommand::toggleDirection)
+                                        .then(Commands.literal("input")
+                                                .executes(context -> setDirection(context, false)))
+                                        .then(Commands.literal("output")
+                                                .executes(context -> setDirection(context, true))))
                                 .then(Commands.literal("mode").executes(TransceiverCommand::cycleMode))
                                 .then(Commands.literal("power")
                                         .then(Commands.argument("level", IntegerArgumentType.integer(0, MAX_POWER))
@@ -112,6 +119,81 @@ public final class TransceiverCommand {
         target.blockEntity().setTerminalPower(terminal, power);
         applyAndReport(target, terminal);
         return power;
+    }
+
+    /** 只读诊断：打印四端子的实时弱信号、是否参与采集、上次已下发值，用于排查输入接线。 */
+    private static int capture(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+        Target target = resolve(context);
+        HardCircTransceiverBlockEntity blockEntity = target.blockEntity();
+        target.source().sendSuccess(() -> Component.translatable(
+                "command.hardcirc_pack.transceiver.capture",
+                blockEntity.getTransceiverId(),
+                target.pos().toShortString()), false);
+        int[] signals = blockEntity.readTerminalSignals();
+        for (int terminal = 0; terminal < HardCircTransceiverBlock.TERMINAL_COUNT; terminal++) {
+            final int index = terminal;
+            final int signal = signals[terminal];
+            final Component collecting = Component.translatable(blockEntity.isActiveInputTerminal(terminal)
+                    ? "command.hardcirc_pack.transceiver.state.collecting"
+                    : "command.hardcirc_pack.transceiver.state.skipped");
+            final int lastSent = blockEntity.getLastSentTerminal(terminal);
+            target.source().sendSuccess(() -> Component.translatable(
+                    "command.hardcirc_pack.transceiver.capture.line",
+                    index,
+                    Component.translatable(faceKey(index)),
+                    signal,
+                    collecting,
+                    lastSent < 0
+                            ? Component.translatable("command.hardcirc_pack.transceiver.never")
+                            : Component.literal(String.valueOf(lastSent))), false);
+        }
+        return HardCircTransceiverBlock.TERMINAL_COUNT;
+    }
+
+    /** 立即按当前采集值强制下发一帧 S2C（绕过变化检测），用于验证下行链路与 ESP32 侧。 */
+    private static int send(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+        Target target = resolve(context);
+        HardCircTransceiverBlockEntity blockEntity = target.blockEntity();
+        int[] frame = blockEntity.buildInputFrame();
+        if (blockEntity.sendInputFrameNow()) {
+            target.source().sendSuccess(() -> Component.translatable(
+                    "command.hardcirc_pack.transceiver.send.ok",
+                    blockEntity.getTransceiverId(),
+                    formatTerminals(frame)), false);
+            return 1;
+        }
+        target.source().sendFailure(Component.translatable("command.hardcirc_pack.transceiver.send.fail"));
+        return 0;
+    }
+
+    /** 确定性设定端子方向（input/output），避免 toggle 依赖翻转前的既有状态。 */
+    private static int setDirection(CommandContext<CommandSourceStack> context, boolean output) throws CommandSyntaxException {
+        Target target = resolve(context);
+        int terminal = IntegerArgumentType.getInteger(context, "terminal");
+        target.blockEntity().setTerminalOutput(terminal, output);
+        applyAndReport(target, terminal);
+        return 1;
+    }
+
+    /** 端子面名称的翻译键；索引顺序与 TERMINAL_FACES 一致（0=NORTH…3=WEST）。 */
+    private static String faceKey(int terminal) {
+        return switch (terminal) {
+            case 0 -> "command.hardcirc_pack.transceiver.face.north";
+            case 1 -> "command.hardcirc_pack.transceiver.face.east";
+            case 2 -> "command.hardcirc_pack.transceiver.face.south";
+            default -> "command.hardcirc_pack.transceiver.face.west";
+        };
+    }
+
+    private static String formatTerminals(int[] terminals) {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < terminals.length; i++) {
+            if (i > 0) {
+                builder.append(", ");
+            }
+            builder.append(terminals[i]);
+        }
+        return builder.toString();
     }
 
     private static void applyAndReport(Target target, int terminal) {

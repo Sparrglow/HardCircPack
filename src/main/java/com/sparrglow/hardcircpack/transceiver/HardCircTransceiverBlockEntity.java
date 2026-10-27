@@ -2,7 +2,9 @@ package com.sparrglow.hardcircpack.transceiver;
 
 import com.sparrglow.hardcircpack.HardCircPack;
 import com.sparrglow.hardcircpack.registry.ModContent;
+import com.sparrglow.hardcircpack.transport.ServerTransportManager;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.Packet;
@@ -19,8 +21,9 @@ import java.util.Arrays;
  * 收发器方块实体。端子配置（启用 / 方向 / 模式）与端子值全部存放在这里，由 NBT 持久化；
  * BlockState 只有一个 ACTIVE 布尔，配置改动不触发方块状态重建。
  * <p>
- * 阶段1只做数据搬运：onDataReceived 存待应用端子值，tick 中与当前值对比后按需通知邻居重查红石。
- * 不持有传输实例、不调用 pollReceived()，所有数据由 ServerTransportManager 路由投递。
+ * 阶段1做双向数据搬运：输出侧 onDataReceived 存待应用端子值，tick 与当前值对比后按需通知邻居重查红石；
+ * 输入侧 tick 采集输入端子弱信号，变化且 ≤20Hz 时经 {@code ServerTransportManager.sendFrame()} 下发 S2C 帧。
+ * 不持有传输实例、不调用 pollReceived()，接收与下发都必须走 ServerTransportManager。
  */
 public class HardCircTransceiverBlockEntity extends BlockEntity implements Transceiver {
 
@@ -28,6 +31,7 @@ public class HardCircTransceiverBlockEntity extends BlockEntity implements Trans
     private static final String NBT_TERMINAL_ENABLED = "t_enabled";
     private static final String NBT_TERMINAL_OUTPUT = "t_output";
     private static final String NBT_TERMINAL_MODE = "t_mode";
+    private static final String NBT_TERMINAL_POWER = "t_power";
 
     private static final int MIN_ID = 1;
     private static final int MAX_ID = 255;
@@ -54,10 +58,17 @@ public class HardCircTransceiverBlockEntity extends BlockEntity implements Trans
     private final int[] pendingTerminals = new int[HardCircTransceiverBlock.TERMINAL_COUNT];
     private boolean hasPending;
 
+    /**
+     * 各输入端子「上次已下发」的采集值，用于变化检测；-1 表示尚未下发过，首个采集帧必然视为变化。
+     * 输出端子恒为 0，不参与变化判定。
+     */
+    private final int[] lastSentTerminals = new int[HardCircTransceiverBlock.TERMINAL_COUNT];
+
     public HardCircTransceiverBlockEntity(BlockPos pos, BlockState state) {
         super(ModContent.TRANSCEIVER_BLOCK_ENTITY, pos, state);
         Arrays.fill(terminalEnabled, true);
         Arrays.fill(terminalOutput, true);
+        Arrays.fill(lastSentTerminals, -1);
     }
 
     @Override
@@ -79,6 +90,8 @@ public class HardCircTransceiverBlockEntity extends BlockEntity implements Trans
             tickLogged = true;
             HardCircPack.LOGGER.info("收发器 #{} 服务端 tick 已启动：{}", transceiverId, pos.toShortString());
         }
+        // 输入侧：采集「启用+输入+红石」端子的弱信号，变化且 ≤20Hz 时下发 S2C 帧（协议 4.3/4.4）。
+        captureInputsAndSend();
         if (!hasPending) {
             return;
         }
@@ -96,6 +109,90 @@ public class HardCircTransceiverBlockEntity extends BlockEntity implements Trans
         }
         // 端子值不在 BlockState 中，直接通知邻居重新向本方块查询红石信号
         level.updateNeighborsAt(pos, state.getBlock());
+    }
+
+    /**
+     * 红石输入采集与 S2C 下行（协议 4.3/4.4，0.1.0 输入侧）。
+     * <p>
+     * 采集对象：方向=输入、启用、红石模式 的端子；读取相邻方块经该端子面传来、指向本方块的弱信号
+     * （{@code level.getSignal(pos.relative(face), face)}，语义与 vanilla {@code SignalGetter#getBestNeighborSignal} 一致）。
+     * 仅当采集值相对上次已下发值变化时才打包，4 端子定长全填（输入=采集值，输出=0），
+     * 经 {@link ServerTransportManager#sendFrame} 统一下发（连接校验 + 20Hz 节流）。
+     */
+    private void captureInputsAndSend() {
+        int[] frameTerminals = buildInputFrame();
+        boolean changed = false;
+        for (int i = 0; i < frameTerminals.length; i++) {
+            if (isActiveInputTerminal(i) && frameTerminals[i] != lastSentTerminals[i]) {
+                changed = true;
+                break;
+            }
+        }
+        if (!changed) {
+            return;
+        }
+        // 未连接或被节流时 sendFrame 返回 false，保留变化以便下次 tick 重试
+        if (ServerTransportManager.instance().sendFrame(transceiverId, frameTerminals)) {
+            System.arraycopy(frameTerminals, 0, lastSentTerminals, 0, frameTerminals.length);
+        }
+    }
+
+    /** 「启用 + 方向=输入 + 红石模式」三条件同时成立时才参与输入采集。 */
+    public boolean isActiveInputTerminal(int terminal) {
+        return terminalEnabled[terminal]
+                && !terminalOutput[terminal]
+                && terminalMode[terminal] == HardCircTransceiverBlock.MODE_REDSTONE;
+    }
+
+    /** 读取指定端子面的实时弱信号（不过滤配置；level 为空时按 0 处理）。 */
+    private int readTerminalSignal(int terminal) {
+        if (level == null) {
+            return 0;
+        }
+        Direction face = HardCircTransceiverBlock.TERMINAL_FACES[terminal];
+        return clampPower(level.getSignal(worldPosition.relative(face), face));
+    }
+
+    /** 调试用：读取四个端子面的实时弱信号（不过滤配置），仅服务端有效。 */
+    public int[] readTerminalSignals() {
+        int[] signals = new int[HardCircTransceiverBlock.TERMINAL_COUNT];
+        for (int i = 0; i < signals.length; i++) {
+            signals[i] = readTerminalSignal(i);
+        }
+        return signals;
+    }
+
+    /** 当前应下发的定长帧：采集端子（启用+输入+红石）填实时信号，其余填 0（协议 4.4 定长方案 A）。 */
+    public int[] buildInputFrame() {
+        int[] frame = new int[HardCircTransceiverBlock.TERMINAL_COUNT];
+        for (int i = 0; i < frame.length; i++) {
+            if (isActiveInputTerminal(i)) {
+                frame[i] = readTerminalSignal(i);
+            }
+        }
+        return frame;
+    }
+
+    /**
+     * 调试用：立即按当前采集值强制下发一帧 S2C（绕过变化检测），成功则刷新变化检测基线。
+     *
+     * @return 是否真正写入串口；false 表示传输未连接或被 20Hz 节流拦下
+     */
+    public boolean sendInputFrameNow() {
+        if (level == null || level.isClientSide) {
+            return false;
+        }
+        int[] frame = buildInputFrame();
+        if (ServerTransportManager.instance().sendFrame(transceiverId, frame)) {
+            System.arraycopy(frame, 0, lastSentTerminals, 0, frame.length);
+            return true;
+        }
+        return false;
+    }
+
+    /** 该端子「上次已下发」的采集值；-1 表示尚未下发过。 */
+    public int getLastSentTerminal(int terminal) {
+        return lastSentTerminals[terminal];
     }
 
     /**
@@ -181,6 +278,11 @@ public class HardCircTransceiverBlockEntity extends BlockEntity implements Trans
     /** 仅服务端调用：翻转端子方向（输出↔输入）。 */
     public void toggleTerminalOutput(int terminal) {
         terminalOutput[terminal] = !terminalOutput[terminal];
+    }
+
+    /** 仅服务端调用：直接设定端子方向（调试命令用，避免依赖翻转前的状态）。 */
+    public void setTerminalOutput(int terminal, boolean output) {
+        terminalOutput[terminal] = output;
     }
 
     /** 仅服务端调用：循环切换端子模式（红石→数据→信号→红石）。 */
@@ -280,6 +382,9 @@ public class HardCircTransceiverBlockEntity extends BlockEntity implements Trans
         tag.putByteArray(NBT_TERMINAL_ENABLED, toBytes(terminalEnabled));
         tag.putByteArray(NBT_TERMINAL_OUTPUT, toBytes(terminalOutput));
         tag.putIntArray(NBT_TERMINAL_MODE, terminalMode);
+        // 端子电平必须持久化（规范：端子配置与电平均写入 NBT），否则重进存档后
+        // 相邻红石粉的 blockstate 仍保留旧供电值，而收发器 getSignal 已归 0，造成状态不一致。
+        tag.putIntArray(NBT_TERMINAL_POWER, terminalPower);
     }
 
     @Override
@@ -289,6 +394,7 @@ public class HardCircTransceiverBlockEntity extends BlockEntity implements Trans
         loadBooleans(tag, NBT_TERMINAL_ENABLED, terminalEnabled);
         loadBooleans(tag, NBT_TERMINAL_OUTPUT, terminalOutput);
         loadModes(tag, NBT_TERMINAL_MODE, terminalMode);
+        loadPowers(tag, NBT_TERMINAL_POWER, terminalPower);
     }
 
     private static void loadBooleans(CompoundTag tag, String key, boolean[] target) {
@@ -327,6 +433,21 @@ public class HardCircTransceiverBlockEntity extends BlockEntity implements Trans
         for (int i = 0; i < values.length; i++) {
             target[i] = Math.max(HardCircTransceiverBlock.MODE_REDSTONE,
                     Math.min(HardCircTransceiverBlock.MODE_SIGNAL, values[i]));
+        }
+    }
+
+    private static void loadPowers(CompoundTag tag, String key, int[] target) {
+        if (!tag.contains(key)) {
+            return;
+        }
+        int[] values = tag.getIntArray(key);
+        if (values.length != target.length) {
+            HardCircPack.LOGGER.warn("NBT {} 长度 {} 与端子数 {} 不符，保留默认值",
+                    key, values.length, target.length);
+            return;
+        }
+        for (int i = 0; i < values.length; i++) {
+            target[i] = Math.max(MIN_POWER, Math.min(MAX_POWER, values[i]));
         }
     }
 
